@@ -14,7 +14,7 @@ import { GeneralErrorCodes, ValidationErrorCodes } from './errors';
 import { Handlers } from './handlers';
 import { errorHandler } from './middleware/error_handling';
 import { urlParamsParsing } from './middleware/url_params_parsing';
-import { BroadcastMessage, Configs, NetworkIdToConnectionStore, NetworkIdToProvider } from './types';
+import { BroadcastMessage, Configs, NetworkIdToConnectionStore, NetworkIdToProvider, WebSocketConnection } from './types';
 import { utils } from './utils';
 
 const networkIdToConnectionStore: NetworkIdToConnectionStore = {};
@@ -33,8 +33,21 @@ export async function getAppAsync(networkIdToProvider: NetworkIdToProvider, conf
     const app = express();
     app.use(cors());
     app.use(bodyParser.json());
+    app.disable('x-powered-by');
+    app.set('etag', false);
     const supportedNetworkIds = utils.getSupportedNetworkIds(configs);
     app.use(urlParamsParsing.bind(undefined, supportedNetworkIds));
+
+    /**
+     * GET endpoint for requesting current coordination server configuration
+     */
+    app.get('/v1/configuration', ({}, response: express.Response) => {
+        response.send({
+            expirationDurationSeconds: configs.EXPIRATION_DURATION_SECONDS,
+            selectiveDelayMs: configs.SELECTIVE_DELAY_MS,
+            supportedNetworkIds: supportedNetworkIds
+        }).end();
+    });
 
     /**
      * POST endpoint for requesting signatures for a 0x transaction
@@ -87,7 +100,9 @@ export async function getAppAsync(networkIdToProvider: NetworkIdToProvider, conf
 
         // We do not do origin checks because we want to let anyone subscribe to this endpoint
         // COORDINATOR_OPERATOR: Implement additional credentialling here if desired
-        const connection: WebSocket.connection = request.accept(null, request.origin);
+        const connection: WebSocketConnection = <WebSocketConnection>request.accept(null, request.origin);
+
+        connection.isAlive = true;
 
         // Note: We don't handle the `message` event because this is a broadcast-only endpoint
         const connectionStoreIfExists = networkIdToConnectionStore[networkId];
@@ -103,8 +118,25 @@ export async function getAppAsync(networkIdToProvider: NetworkIdToProvider, conf
 
     // Initialize the connectionStore mapping for supported networkIds
     supportedNetworkIds.forEach(networkId => {
-        networkIdToConnectionStore[networkId] = new Set<WebSocket.connection>();
+        networkIdToConnectionStore[networkId] = new Set<WebSocketConnection>();
     });
+
+    // Set an interval to ping active websocket connections and terminate hanging ones
+    setInterval(() => {
+        supportedNetworkIds.forEach(networkId => {
+            const connectionStore = networkIdToConnectionStore[networkId];
+
+            connectionStore.forEach(connection => {
+                if (connection.isAlive === false) {
+                    connection.close();
+                }
+                else {
+                    connection.isAlive = false;
+                    connection.ping(() => {});
+                }
+            })
+        });
+    }, configs.WEBSOCKET_PING_INTERVAL_MS);
 
     return server;
 }

@@ -4,9 +4,21 @@ import { Order, ZeroExTransaction } from '@0x/types';
 import { BigNumber } from '@0x/utils';
 import * as WebSocket from 'websocket';
 
+export class WebSocketConnection extends WebSocket.connection {
+    isAlive: boolean = true;
+}
+
+export enum ServerMode {
+    HttpPort = "HttpPort",
+    UnixSocket = "UnixSocket"
+}
+
 export interface Configs {
+    SERVER_MODE: ServerMode;
     HTTP_PORT: number;
+    SOCKET_FILE: string;
     NETWORK_ID_TO_SETTINGS: NetworkIdToNetworkSpecificSettings;
+    WEBSOCKET_PING_INTERVAL_MS: number;
     SELECTIVE_DELAY_MS: number;
     EXPIRATION_DURATION_SECONDS: number;
 }
@@ -99,5 +111,5 @@ export interface NetworkIdToContractWrappers {
 }
 
 export interface NetworkIdToConnectionStore {
-    [networkId: number]: Set<WebSocket.connection>;
+    [networkId: number]: Set<WebSocketConnection>;
 }
