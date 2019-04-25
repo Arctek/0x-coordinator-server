@@ -38,6 +38,8 @@ export async function getAppAsync(networkIdToProvider: NetworkIdToProvider, conf
     const supportedNetworkIds = utils.getSupportedNetworkIds(configs);
     app.use(urlParamsParsing.bind(undefined, supportedNetworkIds));
 
+    app.get('/v1/ping', (_, res) => res.send('pong')); // tslint:disable-line:no-shadowed-variable
+
     /**
      * GET endpoint for requesting current coordination server configuration
      */

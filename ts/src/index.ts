@@ -10,6 +10,8 @@ import { configs } from './production_configs';
 import { NetworkIdToProvider, NetworkSpecificSettings, ServerMode } from './types';
 import { utils } from './utils';
 
+export { getAppAsync };
+
 (async () => {
     assertConfigsAreValid(configs);
 
