@@ -13,4 +13,5 @@ export const defaultOrmConfig: ConnectionOptions = {
         cli: {
             entitiesDir: './entities',
         },
+        ...(process.env.ORM_CONFIG !== undefined ? process.env.ORM_CONFIG as {} : {})
     };
