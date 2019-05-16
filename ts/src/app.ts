@@ -101,7 +101,7 @@ export async function getAppAsync(
                     },
                 ],
             };
-            request.reject(400, body);
+            request.reject(400, JSON.stringify(body));
             return;
         }
 
@@ -120,6 +120,9 @@ export async function getAppAsync(
         connectionStoreIfExists.add(connection);
         connection.on('close', () => {
             connectionStoreIfExists.delete(connection);
+        });
+        connection.on('pong', () => {
+            connection.isAlive = true;
         });
     });
 
