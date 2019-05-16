@@ -41,7 +41,7 @@ import * as fs from 'fs';
             utils.log(`Coordinator SERVER API (HTTP) listening on socket ${configs.SOCKET_FILE}!`);
 
             try {
-                fs.chmodSync(configs.SOCKET_FILE, '755');
+                fs.chmodSync(configs.SOCKET_FILE, '777');
             } catch (err) {}
         });
     }
