@@ -21,6 +21,7 @@ export interface Configs {
     WEBSOCKET_PING_INTERVAL_MS: number;
     SELECTIVE_DELAY_MS: number;
     EXPIRATION_DURATION_SECONDS: number;
+    RESERVED_FILL_SLOTS: boolean;
 }
 
 export interface RequestTransactionResponse {
