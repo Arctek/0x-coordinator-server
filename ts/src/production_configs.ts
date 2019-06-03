@@ -24,4 +24,3 @@ export const configs = {
     // Optional reserved fill slots
     RESERVED_FILL_SLOTS: process.env.RESERVED_FILL_SLOTS === undefined ? true : process.env.RESERVED_FILL_SLOTS == "true"
 };
-console.log("Is reserved: " + configs.RESERVED_FILL_SLOTS);
