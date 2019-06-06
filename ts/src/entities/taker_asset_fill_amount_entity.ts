@@ -18,6 +18,9 @@ export class TakerAssetFillAmountEntity {
     @Column()
     public expirationTimeSeconds!: number;
 
+    @Column()
+    public isReserved!: boolean;
+
     @ManyToOne(_type => TransactionEntity, transaction => transaction.takerAssetFillAmounts)
     public transaction!: TransactionEntity;
 }
