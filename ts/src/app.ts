@@ -37,7 +37,8 @@ export async function getAppAsync(
     const handlers = new Handlers(networkIdToProvider, configs, broadcastCallback);
     const app = express();
     app.use(cors());
-    app.use(bodyParser.json());
+    app.use(bodyParser.json({ limit: '2mb' }));
+    app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }))
     app.disable('x-powered-by');
     app.set('etag', false);
     const supportedNetworkIds = utils.getSupportedNetworkIds(configs);
