@@ -30,5 +30,5 @@ export const configs = {
     WEBSOCKET_PING_INTERVAL_MS: 30000,
     // Optional selective delay on fill requests
     SELECTIVE_DELAY_MS: 0,
-    EXPIRATION_DURATION_SECONDS: 60, // 1 minute
+    EXPIRATION_DURATION_SECONDS: 90, // 1 minute
 };
