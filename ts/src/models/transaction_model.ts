@@ -105,7 +105,7 @@ export const transactionModel = {
         takerAddress: string,
     ): Promise<OrderHashToFillAmount> {
         const orderHashes = _.map(orders, o => orderModel.getHash(o));
-        const transactions = await transactionModel.findByOrdersAsync(orders, { takerAddress });
+        const transactions = await transactionModel.findByOrdersAsync(orders, { takerAddress, isExpired: false });
         const orderHashToFillAmount: OrderHashToFillAmount = {};
         for (const transaction of transactions) {
             const relevantOrders = _.filter(transaction.orders, o => _.includes(orderHashes, o.hash));
