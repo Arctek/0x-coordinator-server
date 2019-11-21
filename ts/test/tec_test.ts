@@ -1061,6 +1061,48 @@ describe('Coordinator server', () => {
             const orderHash = orderHashUtils.getOrderHashHex(order);
             expect(response.body.validationErrors[0].entities).to.be.deep.equal([orderHash]);
         });
+        it('should return 200 if request to fill an order multiple times fully but after the previous request has expired', async function() {
+            const timeToWait = (configs.EXPIRATION_DURATION_SECONDS * 1000) + configs.SELECTIVE_DELAY_MS + 100;
+            this.timeout(timeToWait + 2000);
+            const order = await orderFactory.newSignedOrderAsync();
+            const takerAssetFillAmount = order.takerAssetAmount; // Full amount
+            const dataOne = exchangeContract
+                .fillOrder(order, takerAssetFillAmount, order.signature)
+                .getABIEncodedTransactionData();
+            const signedTransactionOne = await createSignedTransactionAsync({ data: dataOne }, takerAddress, CHAIN_ID);
+            let body = {
+                signedTransaction: signedTransactionOne,
+                txOrigin: takerAddress,
+            };
+            let response = await request(app)
+                .post(HTTP_REQUEST_TRANSACTION_ENDPOINT_PATH)
+                .send(body);
+            expect(response.status).to.be.equal(HttpStatus.OK);
+            expect(response.body.signatures).to.not.be.undefined();
+            expect(response.body.signatures.length).to.be.equal(1);
+            let currTimestamp = utils.getCurrentTimestampSeconds();
+            expect(response.body.expirationTimeSeconds).to.be.greaterThan(currTimestamp);
+
+            // wait for previous request to expire
+            await utils.sleepAsync(timeToWait);
+
+            const dataTwo = exchangeContract
+                .fillOrder(order, takerAssetFillAmount, order.signature)
+                .getABIEncodedTransactionData();
+            const signedTransactionTwo = await createSignedTransactionAsync({ data: dataTwo }, takerAddress, CHAIN_ID);
+            body = {
+                signedTransaction: signedTransactionTwo,
+                txOrigin: takerAddress,
+            };
+            response = await request(app)
+                .post(HTTP_REQUEST_TRANSACTION_ENDPOINT_PATH)
+                .send(body);
+            expect(response.status).to.be.equal(HttpStatus.OK);
+            expect(response.body.signatures).to.not.be.undefined();
+            expect(response.body.signatures.length).to.be.equal(1);
+            currTimestamp = utils.getCurrentTimestampSeconds();
+            expect(response.body.expirationTimeSeconds).to.be.greaterThan(currTimestamp);
+        });
         it('should return 400 if transaction `expirationTimeSeconds` is too high', async () => {
             const order = await orderFactory.newSignedOrderAsync();
             const takerAssetFillAmount = order.takerAssetAmount.div(2);

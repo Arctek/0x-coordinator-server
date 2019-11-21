@@ -1,8 +1,14 @@
 import { FEE_RECIPIENT_ADDRESS_ONE, FEE_RECIPIENT_ADDRESS_TWO } from './constants';
 
+import { ServerMode } from '../src/types';
+
 export const configs = {
+     // Server mode to run in, either http with port or unix domain socket
+    SERVER_MODE: ServerMode.HttpPort,
     // Network port to listen on
     HTTP_PORT: 3000,
+    // Socket file location for ServerMode.UnixSocket mode
+    SOCKET_FILE: "",
     // The fee recipient details used by the coordinator's relayer for a particular network
     CHAIN_ID_TO_SETTINGS: {
         1337: {
@@ -20,7 +26,9 @@ export const configs = {
             RPC_URL: 'https://mainnet.infura.io/v3/e2c067d9717e492091d1f1d7a2ec55aa',
         },
     },
+    // Time interval to ping connected websocket clients, to keep the connection alive
+    WEBSOCKET_PING_INTERVAL_MS: 30000,
     // Optional selective delay on fill requests
     SELECTIVE_DELAY_MS: 0,
-    EXPIRATION_DURATION_SECONDS: 90, // 1 minute
+    EXPIRATION_DURATION_SECONDS: 10, // 10 seconds
 };

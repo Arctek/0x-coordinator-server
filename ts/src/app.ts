@@ -15,7 +15,7 @@ import { GeneralErrorCodes, ValidationErrorCodes } from './errors';
 import { Handlers } from './handlers';
 import { errorHandler } from './middleware/error_handling';
 import { urlParamsParsing } from './middleware/url_params_parsing';
-import { BroadcastMessage, ChainIdToConnectionStore, ChainIdToProvider, Configs } from './types';
+import { BroadcastMessage, ChainIdToConnectionStore, ChainIdToProvider, Configs, WebSocketConnection } from './types';
 import { utils } from './utils';
 
 const chainIdToConnectionStore: ChainIdToConnectionStore = {};
@@ -37,7 +37,10 @@ export async function getAppAsync(
     const handlers = new Handlers(chainIdToProvider, configs, broadcastCallback);
     const app = express();
     app.use(cors());
-    app.use(bodyParser.json());
+    app.use(bodyParser.json({ limit: '2mb' }));
+    app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }))
+    app.disable('x-powered-by');
+    app.set('etag', false);
     const supportedChainIds = utils.getSupportedChainIds(configs);
     app.use(urlParamsParsing.bind(undefined, supportedChainIds));
 
@@ -112,7 +115,7 @@ export async function getAppAsync(
 
         // We do not do origin checks because we want to let anyone subscribe to this endpoint
         // COORDINATOR_OPERATOR: Implement additional credentialling here if desired
-        const connection: WebSocket.connection = request.accept(null, request.origin);
+        const connection: WebSocketConnection = request.accept(null, request.origin);
 
         // Note: We don't handle the `message` event because this is a broadcast-only endpoint
         const connectionStoreIfExists = chainIdToConnectionStore[chainId];
@@ -124,12 +127,32 @@ export async function getAppAsync(
         connection.on('close', () => {
             connectionStoreIfExists.delete(connection);
         });
+        connection.on('pong', () => {
+            connection.isAlive = true;
+        });
     });
 
     // Initialize the connectionStore mapping for supported chainIds
     supportedChainIds.forEach(chainId => {
-        chainIdToConnectionStore[chainId] = new Set<WebSocket.connection>();
+        chainIdToConnectionStore[chainId] = new Set<WebSocketConnection>();
     });
+
+    // Set an interval to ping active websocket connections and terminate hanging ones
+    setInterval(() => {
+        supportedChainIds.forEach(chainId => {
+            const connectionStore = chainIdToConnectionStore[chainId];
+
+            connectionStore.forEach(connection => {
+                if (connection.isAlive === false) {
+                    connection.close();
+                }
+                else {
+                    connection.isAlive = false;
+                    connection.ping(() => {});
+                }
+            })
+        });
+    }, configs.WEBSOCKET_PING_INTERVAL_MS);
 
     return server;
 }

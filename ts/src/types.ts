@@ -4,11 +4,23 @@ import { Order, ZeroExTransaction } from '@0x/types';
 import { BigNumber } from '@0x/utils';
 import * as WebSocket from 'websocket';
 export interface Configs {
+    SERVER_MODE: ServerMode;
     HTTP_PORT: number;
+    SOCKET_FILE: string;
     CHAIN_ID_TO_SETTINGS: ChainIdToNetworkSpecificSettings;
+    WEBSOCKET_PING_INTERVAL_MS: number;
     CHAIN_ID_TO_CONTRACT_ADDRESSES?: ChainIdToContractAddresses;
     SELECTIVE_DELAY_MS: number;
     EXPIRATION_DURATION_SECONDS: number;
+}
+
+export class WebSocketConnection extends WebSocket.connection {
+    isAlive: boolean = true;
+}
+
+export enum ServerMode {
+    HttpPort = "HttpPort",
+    UnixSocket = "UnixSocket"
 }
 
 export interface RequestTransactionResponse {
@@ -102,7 +114,7 @@ export interface ChainIdToContractWrappers {
 }
 
 export interface ChainIdToConnectionStore {
-    [chainId: number]: Set<WebSocket.connection>;
+    [chainId: number]: Set<WebSocketConnection>;
 }
 
 export interface OrderInfo {
