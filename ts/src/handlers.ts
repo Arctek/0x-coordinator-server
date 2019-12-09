@@ -212,6 +212,7 @@ export class Handlers {
             ...req.body.signedTransaction,
             salt: new BigNumber(req.body.signedTransaction.salt),
             expirationTimeSeconds: new BigNumber(req.body.signedTransaction.expirationTimeSeconds),
+            gasPrice: new BigNumber(req.body.signedTransaction.gasPrice),
         };
         let decodedCalldata: DecodedCalldata;
         try {
