@@ -1,4 +1,4 @@
-import { CoordinatorContract, ERC20TokenContract, ExchangeContract } from '@0x/abi-gen-wrappers';
+import { CoordinatorContract, ERC20TokenContract, ExchangeContract } from '@0x/contract-wrappers';
 import { ContractAddresses } from '@0x/contract-addresses';
 import { IAssetDataContract } from '@0x/contracts-asset-proxy';
 import { DummyERC20TokenContract } from '@0x/contracts-erc20';
