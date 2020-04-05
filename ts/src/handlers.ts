@@ -22,6 +22,7 @@ import {
     Configs,
     EventTypes,
     ExchangeMethods,
+    OrderInfo,
     OrderAndTraderInfo,
     RequestTransactionResponse,
     Response,
@@ -121,6 +122,12 @@ export class Handlers {
                 });
                 return orders;
             }
+
+            case ExchangeMethods.MatchOrders:
+                return [
+                    decodedCalldata.functionArguments.leftOrder,
+                    decodedCalldata.functionArguments.rightOrder,
+                ];
 
             default:
                 throw utils.getInvalidFunctionCallError(decodedCalldata.functionName);
@@ -291,7 +298,8 @@ export class Handlers {
             case ExchangeMethods.MarketSellOrdersFillOrKill:
             case ExchangeMethods.MarketSellOrdersNoThrow:
             case ExchangeMethods.MarketBuyOrdersFillOrKill:
-            case ExchangeMethods.MarketBuyOrdersNoThrow: {
+            case ExchangeMethods.MarketBuyOrdersNoThrow:
+            case ExchangeMethods.MatchOrders: {
                 const takerAddress = signedTransaction.signerAddress;
                 const takerAssetFillAmounts = await this._getTakerAssetFillAmountsFromDecodedCalldataAsync(
                     decodedCalldata,
@@ -385,6 +393,13 @@ export class Handlers {
                 break;
             }
 
+            case ExchangeMethods.MatchOrders:
+                takerAssetFillAmounts = await this._extractTakerAssetFillAmountsFromMatchOrdersAsync(
+                    decodedCalldata,
+                    chainId,
+                );
+                break;
+
             default:
                 throw utils.getInvalidFunctionCallError(decodedCalldata.functionName);
         }
@@ -419,6 +434,43 @@ export class Handlers {
             totalTakerAssetAmount = totalTakerAssetAmount.minus(takerAssetFillAmount);
             takerAssetFillAmounts.push(takerAssetFillAmount);
         });
+
+        return takerAssetFillAmounts;
+    }
+    private async _extractTakerAssetFillAmountsFromMatchOrdersAsync(
+        decodedCalldata: DecodedCalldata,
+        chainId: number,
+    ): Promise<BigNumber[]> {
+        const takerAssetFillAmounts: BigNumber[] = [];
+        const contractAddresses = getContractAddressesForChainOrThrow(chainId);
+        const [ leftOrder, rightOrder ] = utils.getSignedOrdersFromOrderWithoutExchangeAddresses(
+            [ decodedCalldata.functionArguments.leftOrder, decodedCalldata.functionArguments.rightOrder, ],
+            [ decodedCalldata.functionArguments.leftSignature, decodedCalldata.functionArguments.rightSignature, ],
+            contractAddresses.exchange,
+        );
+        const [ leftOrderInfo, rightOrderInfo ] = await this._getBatchOrderInfoAsync(
+            [ leftOrder, rightOrder ],
+            chainId,
+        );
+        const leftTakerAssetAmountRemaining = leftOrder.takerAssetAmount.minus(leftOrderInfo.orderTakerAssetFilledAmount);
+        const rightTakerAssetAmountRemaining = rightOrder.takerAssetAmount.minus(rightOrderInfo.orderTakerAssetFilledAmount);
+        const rightMakerAssetAmountRemaining = orderCalculationUtils.getMakerFillAmount(
+            rightOrder,
+            rightOrderInfo.orderTakerAssetFilledAmount
+        );
+        if (leftTakerAssetAmountRemaining.gt(rightMakerAssetAmountRemaining)) {
+            takerAssetFillAmounts.push(rightMakerAssetAmountRemaining, rightTakerAssetAmountRemaining);
+        } else if (leftTakerAssetAmountRemaining.lt(rightMakerAssetAmountRemaining)) {
+            takerAssetFillAmounts.push(
+                leftTakerAssetAmountRemaining,
+                orderCalculationUtils.getTakerFillAmount(
+                    rightOrder,
+                    leftTakerAssetAmountRemaining
+                )
+            );
+        } else {
+            takerAssetFillAmounts.push(leftTakerAssetAmountRemaining, rightTakerAssetAmountRemaining);
+        }
 
         return takerAssetFillAmounts;
     }
@@ -466,16 +518,24 @@ export class Handlers {
 
         return takerAssetFillAmounts;
     }
+    private async _getBatchOrderInfoAsync(
+        signedOrders: SignedOrder[],
+        chainId: number,
+    ): Promise<OrderInfo[]> {
+        const contractWrappers = this._chainIdToContractWrappers[chainId];
+        const signatures = _.map(signedOrders, 'signature');
+        const [orderInfos] = await contractWrappers.devUtils
+            .getOrderRelevantStates(signedOrders, signatures)
+            .callAsync();
+        return orderInfos;
+    }
     private async _getBatchOrderAndTraderInfoAsync(
         signedOrders: SignedOrder[],
         takerAddress: string,
         chainId: number,
     ): Promise<OrderAndTraderInfo[]> {
         const contractWrappers = this._chainIdToContractWrappers[chainId];
-        const signatures = _.map(signedOrders, 'signature');
-        const [orderInfos] = await contractWrappers.devUtils
-            .getOrderRelevantStates(signedOrders, signatures)
-            .callAsync();
+        const orderInfos = await this._getBatchOrderInfoAsync(signedOrders, chainId);
         const traderInfos: TraderInfo[] = [];
         for (const signedOrder of signedOrders) {
             const [makerBalancesAndAllowances, takerBalancesAndAllowances] = await Promise.all([

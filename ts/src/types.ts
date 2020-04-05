@@ -149,6 +149,7 @@ export enum ExchangeMethods {
     MarketSellOrdersNoThrow = 'marketSellOrdersNoThrow',
     MarketBuyOrdersFillOrKill = 'marketBuyOrdersFillOrKill',
     MarketBuyOrdersNoThrow = 'marketBuyOrdersNoThrow',
+    MatchOrders = 'matchOrders',
 
     CancelOrder = 'cancelOrder',
     BatchCancelOrders = 'batchCancelOrders',
