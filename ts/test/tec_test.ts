@@ -13,7 +13,7 @@ import { BlockchainLifecycle, web3Factory } from '@0x/dev-utils';
 import { runMigrationsOnceAsync } from '@0x/migrations';
 import { orderCalculationUtils, SignatureType } from '@0x/order-utils';
 import { Web3ProviderEngine } from '@0x/subproviders';
-import { SignedZeroExTransaction, ZeroExTransaction } from '@0x/types';
+import { SignedZeroExTransaction, Order, ZeroExTransaction } from '@0x/types';
 import { BigNumber, fetchAsync } from '@0x/utils';
 import { Web3Wrapper } from '@0x/web3-wrapper';
 import * as chai from 'chai';
@@ -77,6 +77,8 @@ let blockchainLifecycle: BlockchainLifecycle;
 
 let coordinatorContract: CoordinatorContract;
 let exchangeContract: ExchangeContract;
+let assetDataEncoder: IAssetDataContract;
+let defaultOrderParams: Partial<Order>;
 
 // Websocket tests only
 const TEST_PORT = 8361;
@@ -106,7 +108,7 @@ describe('Coordinator server', () => {
         };
         provider = web3Factory.getRpcProvider(ganacheConfigs);
 
-        const assetDataEncoder = new IAssetDataContract(testConstants.NULL_ADDRESS, provider);
+        assetDataEncoder = new IAssetDataContract(testConstants.NULL_ADDRESS, provider);
         web3Wrapper = new Web3Wrapper(provider);
         blockchainLifecycle = new BlockchainLifecycle(web3Wrapper);
 
@@ -123,7 +125,7 @@ describe('Coordinator server', () => {
         exchangeContract = new ExchangeContract(contractAddresses.exchange, provider);
         coordinatorContract = new CoordinatorContract(contractAddresses.coordinator, provider, TX_DEFAULTS);
 
-        const defaultOrderParams = {
+        defaultOrderParams = {
             ...testConstants.STATIC_ORDER_PARAMS,
             makerAddress,
             feeRecipientAddress,
@@ -163,9 +165,9 @@ describe('Coordinator server', () => {
     beforeEach(async () => {
         await blockchainLifecycle.startAsync();
 
-        const makerBalance = testConstants.STATIC_ORDER_PARAMS.makerAssetAmount.times(5);
+        const makerBalance = testConstants.STATIC_ORDER_PARAMS.makerAssetAmount.times(25);
         const makerAllowance = UNLIMITED_ALLOWANCE;
-        const takerBalance = testConstants.STATIC_ORDER_PARAMS.takerAssetAmount.times(5);
+        const takerBalance = testConstants.STATIC_ORDER_PARAMS.takerAssetAmount.times(25);
         const takerAllowance = UNLIMITED_ALLOWANCE;
 
         await makerTokenContract
@@ -179,6 +181,20 @@ describe('Coordinator server', () => {
             .approve(contractAddresses.erc20Proxy, makerAllowance)
             .awaitTransactionSuccessAsync(
                 { from: makerAddress },
+                { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
+            );
+
+        await makerTokenContract
+            .setBalance(takerAddress, takerBalance)
+            .awaitTransactionSuccessAsync(
+                { from: owner },
+                { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
+            );
+
+        await makerTokenContract
+            .approve(contractAddresses.erc20Proxy, takerAllowance)
+            .awaitTransactionSuccessAsync(
+                { from: takerAddress },
                 { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
             );
         const zrxToken = new ERC20TokenContract(contractAddresses.zrxToken, provider);
@@ -208,6 +224,20 @@ describe('Coordinator server', () => {
             .approve(contractAddresses.erc20Proxy, takerAllowance)
             .awaitTransactionSuccessAsync(
                 { from: takerAddress },
+                { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
+            );
+
+        await takerTokenContract
+            .setBalance(makerAddress, takerBalance)
+            .awaitTransactionSuccessAsync(
+                { from: owner },
+                { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
+            );
+
+        await takerTokenContract
+            .approve(contractAddresses.erc20Proxy, takerAllowance)
+            .awaitTransactionSuccessAsync(
+                { from: makerAddress },
                 { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
             );
 
@@ -994,6 +1024,178 @@ describe('Coordinator server', () => {
                     },
                     { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
                 );
+        });
+        it('should return 200 OK if request to matchOrders uncancelled exact orders', async () => {
+            const leftOrder = await orderFactory.newSignedOrderAsync();
+            const rightOrderParams = {
+                ...defaultOrderParams,
+                makerAssetData: assetDataEncoder.ERC20Token(DEFAULT_TAKER_TOKEN_ADDRESS).getABIEncodedTransactionData(),
+                takerAssetData: assetDataEncoder.ERC20Token(DEFAULT_MAKER_TOKEN_ADDRESS).getABIEncodedTransactionData(),
+                makerFeeAssetData: assetDataEncoder.ERC20Token(DEFAULT_TAKER_TOKEN_ADDRESS).getABIEncodedTransactionData(),
+                takerFeeAssetData: assetDataEncoder.ERC20Token(DEFAULT_MAKER_TOKEN_ADDRESS).getABIEncodedTransactionData(),
+                makerAssetAmount: leftOrder.takerAssetAmount,
+                takerAssetAmount: leftOrder.makerAssetAmount,
+            };
+            const rightOrder = await orderFactory.newSignedOrderAsync(rightOrderParams);
+            const data = exchangeContract
+                .matchOrders(
+                    leftOrder,
+                    rightOrder,
+                    leftOrder.signature,
+                    rightOrder.signature,
+                )
+                .getABIEncodedTransactionData();
+            const signedTransaction = await createSignedTransactionAsync({ data }, takerAddress, CHAIN_ID);
+            const body = {
+                signedTransaction,
+                txOrigin: takerAddress,
+            };
+            const response = await request(app)
+                .post(HTTP_REQUEST_TRANSACTION_ENDPOINT_PATH)
+                .send(body);
+            expect(response.status).to.be.equal(HttpStatus.OK);
+            expect(response.body.signatures).to.not.be.undefined();
+            expect(response.body.signatures.length).to.be.equal(1);
+            const currTimestamp = utils.getCurrentTimestampSeconds();
+            expect(response.body.expirationTimeSeconds).to.be.greaterThan(currTimestamp);
+
+            // Check that fill request was added to DB
+            const transactionEntityIfExists = await transactionModel.findAsync(
+                takerAddress,
+                JSON.stringify(response.body.signatures),
+            );
+            expect(transactionEntityIfExists).to.not.be.undefined();
+            expect((transactionEntityIfExists as TransactionEntity).expirationTimeSeconds).to.be.equal(
+                response.body.expirationTimeSeconds,
+            );
+            expect((transactionEntityIfExists as TransactionEntity).takerAssetFillAmounts.length).to.equal(2);
+
+            // Check that the correct takerAssetFillAmounts were calculated and stored
+            const leftOrderHash = orderHashUtils.getOrderHashHex(leftOrder);
+            const takerAssetFillAmountOne = _.find(
+                (transactionEntityIfExists as TransactionEntity).takerAssetFillAmounts,
+                t => t.orderHash === leftOrderHash,
+            ) as TakerAssetFillAmountEntity;
+            const expectedOrderOneMakerAssetFillAmount = orderCalculationUtils.getMakerFillAmount(
+                leftOrder,
+                takerAssetFillAmountOne.takerAssetFillAmount,
+            );
+            expect(expectedOrderOneMakerAssetFillAmount).to.be.bignumber.equal(leftOrder.makerAssetAmount);
+
+            const rightOrderHash = orderHashUtils.getOrderHashHex(rightOrder);
+            const takerAssetFillAmountTwo = _.find(
+                (transactionEntityIfExists as TransactionEntity).takerAssetFillAmounts,
+                t => t.orderHash === rightOrderHash,
+            ) as TakerAssetFillAmountEntity;
+            const expectedOrderTwoMakerAssetFillAmount = orderCalculationUtils.getMakerFillAmount(
+                rightOrder,
+                takerAssetFillAmountTwo.takerAssetFillAmount,
+            );
+            expect(expectedOrderTwoMakerAssetFillAmount).to.be.bignumber.equal(rightOrder.makerAssetAmount);
+
+            // Execute signed transaction in coordinator contract
+            await coordinatorContract
+                .executeTransaction(
+                    signedTransaction,
+                    takerAddress,
+                    signedTransaction.signature,
+                    response.body.signatures,
+                )
+                .awaitTransactionSuccessAsync(
+                    {
+                        from: takerAddress,
+                        value: DEFAULT_PROTOCOL_FEE_MULTIPLIER.times(defaultTransactionParams.gasPrice).times(2),
+                    },
+                    { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
+                );
+        });
+        it('should return 200 OK if request to matchOrders uncancelled unbalanced right order', async () => {
+            const leftOrder = await orderFactory.newSignedOrderAsync();
+            const rightOrderParams = {
+                ...defaultOrderParams,
+                makerAssetData: assetDataEncoder.ERC20Token(DEFAULT_TAKER_TOKEN_ADDRESS).getABIEncodedTransactionData(),
+                takerAssetData: assetDataEncoder.ERC20Token(DEFAULT_MAKER_TOKEN_ADDRESS).getABIEncodedTransactionData(),
+                makerFeeAssetData: assetDataEncoder.ERC20Token(DEFAULT_TAKER_TOKEN_ADDRESS).getABIEncodedTransactionData(),
+                takerFeeAssetData: assetDataEncoder.ERC20Token(DEFAULT_MAKER_TOKEN_ADDRESS).getABIEncodedTransactionData(),
+                makerAssetAmount: leftOrder.takerAssetAmount.dividedBy(2).integerValue(BigNumber.ROUND_FLOOR),
+                takerAssetAmount: leftOrder.makerAssetAmount.dividedBy(2).integerValue(BigNumber.ROUND_FLOOR),
+            };
+            const rightOrder = await orderFactory.newSignedOrderAsync(rightOrderParams);
+            const data = exchangeContract
+                .matchOrders(
+                    leftOrder,
+                    rightOrder,
+                    leftOrder.signature,
+                    rightOrder.signature,
+                )
+                .getABIEncodedTransactionData();
+            const signedTransaction = await createSignedTransactionAsync({ data }, takerAddress, CHAIN_ID);
+            const body = {
+                signedTransaction,
+                txOrigin: takerAddress,
+            };
+            const response = await request(app)
+                .post(HTTP_REQUEST_TRANSACTION_ENDPOINT_PATH)
+                .send(body);
+            expect(response.status).to.be.equal(HttpStatus.OK);
+            expect(response.body.signatures).to.not.be.undefined();
+            expect(response.body.signatures.length).to.be.equal(1);
+            const currTimestamp = utils.getCurrentTimestampSeconds();
+            expect(response.body.expirationTimeSeconds).to.be.greaterThan(currTimestamp);
+
+            // Check that fill request was added to DB
+            const transactionEntityIfExists = await transactionModel.findAsync(
+                takerAddress,
+                JSON.stringify(response.body.signatures),
+            );
+            expect(transactionEntityIfExists).to.not.be.undefined();
+            expect((transactionEntityIfExists as TransactionEntity).expirationTimeSeconds).to.be.equal(
+                response.body.expirationTimeSeconds,
+            );
+            expect((transactionEntityIfExists as TransactionEntity).takerAssetFillAmounts.length).to.equal(2);
+
+            // Check that the correct takerAssetFillAmounts were calculated and stored
+            const leftOrderHash = orderHashUtils.getOrderHashHex(leftOrder);
+            const takerAssetFillAmountOne = _.find(
+                (transactionEntityIfExists as TransactionEntity).takerAssetFillAmounts,
+                t => t.orderHash === leftOrderHash,
+            ) as TakerAssetFillAmountEntity;
+            const expectedOrderOneMakerAssetFillAmount = orderCalculationUtils.getMakerFillAmount(
+                leftOrder,
+                takerAssetFillAmountOne.takerAssetFillAmount,
+            );
+            // Right order contains the maximal fill amount
+            expect(expectedOrderOneMakerAssetFillAmount).to.be.bignumber.equal(rightOrder.takerAssetAmount);
+
+            const rightOrderHash = orderHashUtils.getOrderHashHex(rightOrder);
+            const takerAssetFillAmountTwo = _.find(
+                (transactionEntityIfExists as TransactionEntity).takerAssetFillAmounts,
+                t => t.orderHash === rightOrderHash,
+            ) as TakerAssetFillAmountEntity;
+            const expectedOrderTwoMakerAssetFillAmount = orderCalculationUtils.getMakerFillAmount(
+                rightOrder,
+                takerAssetFillAmountTwo.takerAssetFillAmount,
+            );
+            expect(expectedOrderTwoMakerAssetFillAmount).to.be.bignumber.equal(rightOrder.makerAssetAmount);
+
+            // Execute signed transaction in coordinator contract
+            await coordinatorContract
+                .executeTransaction(
+                    signedTransaction,
+                    takerAddress,
+                    signedTransaction.signature,
+                    response.body.signatures,
+                )
+                .awaitTransactionSuccessAsync(
+                    {
+                        from: takerAddress,
+                        value: DEFAULT_PROTOCOL_FEE_MULTIPLIER.times(defaultTransactionParams.gasPrice).times(2),
+                    },
+                    { pollingIntervalMs: testConstants.AWAIT_TRANSACTION_MINED_MS },
+                )
+                .catch(async (err) => {
+                    console.log(err)
+                });
         });
         it('should return 400 TRANSACTION_ALREADY_USED if request same 0x transaction multiple times', async () => {
             const order = await orderFactory.newSignedOrderAsync();

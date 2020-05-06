@@ -125,8 +125,16 @@ export class Handlers {
 
             case ExchangeMethods.MatchOrders:
                 return [
-                    decodedCalldata.functionArguments.leftOrder,
-                    decodedCalldata.functionArguments.rightOrder,
+                    {
+                        ...decodedCalldata.functionArguments.leftOrder,
+                        exchangeAddress: contractAddresses.exchange,
+                        chainId,
+                    },
+                    {
+                        ...decodedCalldata.functionArguments.rightOrder,
+                        exchangeAddress: contractAddresses.exchange,
+                        chainId,
+                    },
                 ];
 
             default:
@@ -448,15 +456,25 @@ export class Handlers {
             [ decodedCalldata.functionArguments.leftSignature, decodedCalldata.functionArguments.rightSignature, ],
             contractAddresses.exchange,
         );
-        const [ leftOrderInfo, rightOrderInfo ] = await this._getBatchOrderInfoAsync(
-            [ leftOrder, rightOrder ],
-            chainId,
-        );
-        const leftTakerAssetAmountRemaining = leftOrder.takerAssetAmount.minus(leftOrderInfo.orderTakerAssetFilledAmount);
-        const rightTakerAssetAmountRemaining = rightOrder.takerAssetAmount.minus(rightOrderInfo.orderTakerAssetFilledAmount);
+        let leftOrderInfoTakerAssetFilledAmount: BigNumber;
+        let rightOrderInfoTakerAssetFilledAmount: BigNumber;
+        try {
+            const [ leftOrderInfo, rightOrderInfo ] = await this._getBatchOrderInfoAsync(
+                [ leftOrder, rightOrder ],
+                chainId,
+            );
+            leftOrderInfoTakerAssetFilledAmount = leftOrderInfo.orderTakerAssetFilledAmount;
+            rightOrderInfoTakerAssetFilledAmount = rightOrderInfo.orderTakerAssetFilledAmount;
+        } catch (err) {
+            leftOrderInfoTakerAssetFilledAmount = new BigNumber(0);
+            rightOrderInfoTakerAssetFilledAmount = new BigNumber(0);
+        }
+        
+        const leftTakerAssetAmountRemaining = leftOrder.takerAssetAmount.minus(leftOrderInfoTakerAssetFilledAmount);
+        const rightTakerAssetAmountRemaining = rightOrder.takerAssetAmount.minus(rightOrderInfoTakerAssetFilledAmount);
         const rightMakerAssetAmountRemaining = orderCalculationUtils.getMakerFillAmount(
             rightOrder,
-            rightOrderInfo.orderTakerAssetFilledAmount
+            rightTakerAssetAmountRemaining
         );
         if (leftTakerAssetAmountRemaining.gt(rightMakerAssetAmountRemaining)) {
             takerAssetFillAmounts.push(rightMakerAssetAmountRemaining, rightTakerAssetAmountRemaining);
